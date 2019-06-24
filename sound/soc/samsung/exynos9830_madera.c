@@ -33,7 +33,7 @@
 #define MADERA_BASECLK_44K1	45158400
 
 #define MADERA_AMP_RATE	48000
-#define MADERA_AMP_BCLK	(MADERA_AMP_RATE * 16 * 4)
+#define MADERA_AMP_BCLK	(MADERA_AMP_RATE * 24 * 6)
 
 #define CLK_SRC_SCLK 0
 #define CLK_SRC_LRCLK 1
@@ -178,16 +178,6 @@ static int madera_start_fll(struct snd_soc_card *card,
 	pll_id = map_fllid_with_name(config->name);
 	switch (pll_id) {
 	case FLL1:
-		if (forced_mclk1) {
-			/* use 32kHz input to avoid overclocking the FLL when
-			 * forcing a specific MCLK frequency into the codec
-			 * FLL calculations
-			 */
-#if IS_ENABLED(CONFIG_SND_SOC_MADERA)
-			fsrc = MADERA_FLL_SRC_MCLK2;
-#endif
-			fin = forced_mclk1;
-		} else {
 			fsrc = config->source;
 			fin = config->rate;
 		}

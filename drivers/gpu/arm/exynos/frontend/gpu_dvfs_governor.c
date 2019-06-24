@@ -1,5 +1,4 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-
 /*
  * (C) COPYRIGHT 2021 Samsung Electronics Inc. All rights reserved.
  *
@@ -32,48 +31,63 @@
 #include <linux/sysfs.h>
 #include <linux/thermal.h>
 #include <linux/kernel.h>
+#include <linux/ktime.h>
+
+/* ------------------------------------------------------------------------- */
+/*                          Profiles & Common Tunables                       */
+/* ------------------------------------------------------------------------- */
 
 enum governor_profile {
-    GOV_PROFILE_SOFT = 0,
-    GOV_PROFILE_MEDIUM,
-    GOV_PROFILE_EXTREME,
-    GOV_PROFILE_OVERCLOCK,
-    GOV_PROFILE_MAX
+	GOV_PROFILE_SOFT = 0,
+	GOV_PROFILE_MEDIUM,
+	GOV_PROFILE_EXTREME,
+	GOV_PROFILE_OVERCLOCK,
+	GOV_PROFILE_MAX
 };
 
 static const char * const profile_names[] = {
-    "soft", "medium", "extreme", "overclock"
+	"soft", "medium", "extreme", "overclock"
 };
 
 static enum governor_profile current_profile = GOV_PROFILE_MEDIUM;
 
+/* NOTE: Keep in ascending order (Hz). */
 static const int freq_steps[] = {
-    156000,  // Step 0
-    260000,  // Step 1
-    377000,  // Step 2
-    455000,  // Step 3
-    572000,  // Step 4
-    702000,  // Step 5
-    800000,  // Step 6
-    832000,  // Step 7
-    897000   // Step 8
+	156000,  // 0
+	260000,  // 1
+	325000,  // 2
+	377000,  // 3
+	455000,  // 4
+	481000,  // 5
+	507000,  // 6
+	572000,  // 7
+	598000,  // 8
+	702000,  // 9
+	767000,  // 10
+	799500,  // 11
+	800000,  // 12
+	832000,  // 13
+	897000,  // 14
 };
 static const int num_steps = ARRAY_SIZE(freq_steps);
 
-static int thermal_limit_temp = 75;
-static int thermal_safe_step = 5; // 702 MHz
+static int thermal_limit_temp = 82;     /* °C */
+static int thermal_safe_step = 12;      /* ~800 MHz (index 12) */
 
 static struct dvfs_info *dvfs;
 
-/* TODO: This should be moved to DVFS module */
+/* ------------------------------------------------------------------------- */
+/*                           Housekeeping Callbacks                           */
+/* ------------------------------------------------------------------------- */
+
+/* NOTE: Kept as-is, only formatting/clarity tweaks applied. */
 int gpex_dvfs_set_clock_callback(void)
 {
 	unsigned long flags;
 	int level = 0;
-
 	int cur_clock = 0;
-	cur_clock = gpex_clock_get_cur_clock();
 
+	cur_clock = gpex_clock_get_cur_clock();
 	level = gpex_clock_get_table_idx(cur_clock);
 	if (level >= 0) {
 		spin_lock_irqsave(&dvfs->spinlock, flags);
@@ -85,7 +99,6 @@ int gpex_dvfs_set_clock_callback(void)
 			dvfs->interactive.delay_count = 0;
 
 		dvfs->step = level;
-		//gpex_dvfs_set_step(level);
 
 		spin_unlock_irqrestore(&dvfs->spinlock, flags);
 	} else {
@@ -96,47 +109,56 @@ int gpex_dvfs_set_clock_callback(void)
 	return 0;
 }
 
+/* --------------------------- sysfs: profile ------------------------------ */
+
 static ssize_t profile_show(struct device *dev,
-                            struct device_attribute *attr, char *buf)
+			    struct device_attribute *attr, char *buf)
 {
-    return sprintf(buf, "%s\n", profile_names[current_profile]);
+	return sprintf(buf, "%s\n", profile_names[current_profile]);
 }
 
 static ssize_t profile_store(struct device *dev,
-                             struct device_attribute *attr,
-                             const char *buf, size_t count)
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
 {
-    int i;
-    for (i = 0; i < GOV_PROFILE_MAX; i++) {
-        if (sysfs_streq(buf, profile_names[i])) {
-            current_profile = i;
-            pr_info("GPU governor: profile set to %s\n", profile_names[i]);
-            return count;
-        }
-    }
-    pr_warn("GPU governor: invalid profile '%s'\n", buf);
-    return -EINVAL;
+	int i;
+	for (i = 0; i < GOV_PROFILE_MAX; i++) {
+		if (sysfs_streq(buf, profile_names[i])) {
+			current_profile = i;
+			pr_info("GPU governor: profile set to %s\n", profile_names[i]);
+			return count;
+		}
+	}
+	pr_warn("GPU governor: invalid profile '%s'\n", buf);
+	return -EINVAL;
 }
 static DEVICE_ATTR_RW(profile);
 
+/* ------------------------ sysfs: thermal limit --------------------------- */
+
 static ssize_t thermal_limit_show(struct device *dev,
-                                  struct device_attribute *attr, char *buf)
+				  struct device_attribute *attr, char *buf)
 {
-    return sprintf(buf, "%d\n", thermal_limit_temp);
+	return sprintf(buf, "%d\n", thermal_limit_temp);
 }
+
 static ssize_t thermal_limit_store(struct device *dev,
-                                   struct device_attribute *attr,
-                                   const char *buf, size_t count)
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
 {
-    int val;
-    if (kstrtoint(buf, 10, &val) == 0) {
-        thermal_limit_temp = val;
-        pr_info("GPU governor: thermal limit set to %d°C\n", val);
-        return count;
-    }
-    return -EINVAL;
+	int val;
+	if (kstrtoint(buf, 10, &val) == 0) {
+		thermal_limit_temp = val;
+		pr_info("GPU governor: thermal limit set to %d°C\n", val);
+		return count;
+	}
+	return -EINVAL;
 }
 static DEVICE_ATTR_RW(thermal_limit);
+
+/* ------------------------------------------------------------------------- */
+/*                               Governors                                   */
+/* ------------------------------------------------------------------------- */
 
 typedef int (*GET_NEXT_LEVEL)(int utilization);
 static GET_NEXT_LEVEL gpu_dvfs_get_next_level;
@@ -150,7 +172,7 @@ static int gpu_dvfs_governor_dynamic(int utilization);
 static int gpu_dvfs_governor_performance(int utilization);
 
 static gpu_dvfs_governor_info governor_info[G3D_MAX_GOVERNOR_NUM] = {
-        {
+	{
 		G3D_DVFS_GOVERNOR_ENERGY_ONDEMAND,
 		"Energy_ondemand",
 		gpu_dvfs_governor_energy_ondemand,
@@ -181,10 +203,10 @@ static gpu_dvfs_governor_info governor_info[G3D_MAX_GOVERNOR_NUM] = {
 		gpu_dvfs_governor_dynamic,
 	},
 	{
-                G3D_DVFS_GOVERNOR_PERFORMANCE,
-                "Performance",
-                gpu_dvfs_governor_performance,
-        },
+		G3D_DVFS_GOVERNOR_PERFORMANCE,
+		"Performance",
+		gpu_dvfs_governor_performance,
+	},
 };
 
 void gpu_dvfs_update_start_clk(int governor_type, int clk)
@@ -196,6 +218,8 @@ void *gpu_dvfs_get_governor_info(void)
 {
 	return &governor_info;
 }
+
+/* ------------------------------ Interactive ------------------------------ */
 
 static int gpu_dvfs_governor_interactive(int utilization)
 {
@@ -234,6 +258,8 @@ static int gpu_dvfs_governor_interactive(int utilization)
 
 	return 0;
 }
+
+/* --------------------------------- Joint --------------------------------- */
 
 static int gpu_dvfs_governor_joint(int utilization)
 {
@@ -282,6 +308,7 @@ static int gpu_dvfs_governor_joint(int utilization)
 
 	return 0;
 }
+
 #define weight_table_size 12
 #define WEIGHT_TABLE_MAX_IDX 11
 int gpu_weight_prediction_utilisation(int utilization)
@@ -381,6 +408,8 @@ int gpu_weight_prediction_utilisation(int utilization)
 	return util_conv;
 }
 
+/* --------------------------------- Static -------------------------------- */
+
 #define G3D_GOVERNOR_STATIC_PERIOD 5
 #define UTIL_T1 15
 #define UTIL_T2 27
@@ -389,71 +418,68 @@ int gpu_weight_prediction_utilisation(int utilization)
 
 static int gpu_dvfs_governor_static(int utilization)
 {
-    static int count = 0;
-    static int above_limit_cycles = 0;
-    static int below_limit_cycles = 0;
+	static int count = 0;
+	static int above_limit_cycles = 0;
+	static int below_limit_cycles = 0;
 
-    int target_freq = freq_steps[0];
-    int current_freq = dvfs->table[dvfs->step].clock;
-    int temp = 0;
+	int target_freq = freq_steps[0];
+	int current_freq = dvfs->table[dvfs->step].clock;
+	int temp = 0;
 
-    if (++count < G3D_GOVERNOR_STATIC_PERIOD)
-        return 0;
-    count = 0;
+	if (++count < G3D_GOVERNOR_STATIC_PERIOD)
+		return 0;
+	count = 0;
 
-    {
-        struct thermal_zone_device *tz;
-        tz = thermal_zone_get_zone_by_name("G3D");
-        if (!IS_ERR(tz))
-            thermal_zone_get_temp(tz, &temp);
-        temp /= 1000;
-    }
+	/* Read temperature (°C) if the zone exists */
+	{
+		struct thermal_zone_device *tz = thermal_zone_get_zone_by_name("G3D");
+		if (!IS_ERR(tz))
+			thermal_zone_get_temp(tz, &temp);
+		temp /= 1000;
+	}
 
-    if (temp >= thermal_limit_temp) {
-        above_limit_cycles++;
-        below_limit_cycles = 0;
-        if (above_limit_cycles >= HYSTERESIS_CYCLES) {
-            target_freq = freq_steps[thermal_safe_step];
-            goto apply_freq;
-        }
-    } else {
-        below_limit_cycles++;
-        above_limit_cycles = 0;
-    }
+	/* Thermal clamp with hysteresis */
+	if (temp >= thermal_limit_temp) {
+		above_limit_cycles++;
+		below_limit_cycles = 0;
+		if (above_limit_cycles >= HYSTERESIS_CYCLES) {
+			target_freq = freq_steps[thermal_safe_step];
+			goto apply_freq;
+		}
+	} else {
+		below_limit_cycles++;
+		above_limit_cycles = 0;
+	}
 
-    if (utilization <= UTIL_T1) {
-        target_freq = freq_steps[1]; // 260 MHz
-    } else if (utilization <= UTIL_T2) {
-        target_freq = freq_steps[3]; // 455 MHz
-    } else if (utilization <= UTIL_T3) {
-        target_freq = freq_steps[4]; // 572 MHz
-    } else {
-        switch (current_profile) {
-        case GOV_PROFILE_SOFT:
-            target_freq = freq_steps[5]; // 702 MHz
-            break;
-        case GOV_PROFILE_MEDIUM:
-            target_freq = freq_steps[6]; // 800 MHz
-            break;
-        case GOV_PROFILE_EXTREME:
-            target_freq = freq_steps[7]; // 832 MHz
-            break;
-        case GOV_PROFILE_OVERCLOCK:
-            target_freq = freq_steps[8]; // 897 MHz
-            break;
-        }
-    }
+	/* Simple utilization bands */
+	if (utilization <= UTIL_T1) {
+		target_freq = freq_steps[1]; /* ~260 MHz */
+	} else if (utilization <= UTIL_T2) {
+		target_freq = freq_steps[4]; /* ~455 MHz */
+	} else if (utilization <= UTIL_T3) {
+		target_freq = freq_steps[7]; /* ~572 MHz */
+	} else {
+		/* Map profiles to valid top-end targets (fixing OOB indices) */
+		switch (current_profile) {
+		case GOV_PROFILE_SOFT:      target_freq = freq_steps[9];  break;  /* ~702 MHz */
+		case GOV_PROFILE_MEDIUM:    target_freq = freq_steps[12]; break;  /* ~800 MHz */
+		case GOV_PROFILE_EXTREME:   target_freq = freq_steps[13]; break;  /* ~832 MHz */
+		case GOV_PROFILE_OVERCLOCK: target_freq = freq_steps[14]; break;  /* ~897 MHz */
+		default:                    target_freq = freq_steps[12]; break;
+		}
+	}
 
 apply_freq:
-    if (current_freq != target_freq) {
-        int idx = gpex_clock_get_table_idx(target_freq);
-        if (idx >= 0 && idx < num_steps) {
-            dvfs->step = idx;
-        }
-    }
+	if (current_freq != target_freq) {
+		int idx = gpex_clock_get_table_idx(target_freq);
+		if (idx >= 0)
+			dvfs->step = idx;
+	}
 
-    return 0;
+	return 0;
 }
+
+/* -------------------------------- Booster -------------------------------- */
 
 static int gpu_dvfs_governor_booster(int utilization)
 {
@@ -492,6 +518,8 @@ static int gpu_dvfs_governor_booster(int utilization)
 
 	return 0;
 }
+
+/* -------------------------------- Dynamic -------------------------------- */
 
 static int gpu_dvfs_governor_dynamic(int utilization)
 {
@@ -538,20 +566,22 @@ static int gpu_dvfs_governor_dynamic(int utilization)
 	return 0;
 }
 
+/* ----------------------------- Performance ------------------------------- */
+
 static int gpu_dvfs_governor_performance(int utilization)
 {
+	int max_allowed_idx = gpex_clock_get_table_idx(gpex_clock_get_max_clock_limit());
 
-    int max_allowed_idx = gpex_clock_get_table_idx(gpex_clock_get_max_clock_limit());
-    
-    if (max_allowed_idx < 0) {
-        max_allowed_idx = gpex_clock_get_table_idx(gpex_clock_get_max_clock());
-    }
-    
-    dvfs->step = max_allowed_idx;
-    return 0;
+	if (max_allowed_idx < 0)
+		max_allowed_idx = gpex_clock_get_table_idx(gpex_clock_get_max_clock());
+
+	dvfs->step = max_allowed_idx;
+	return 0;
 }
 
-/* ---------------- Energy_ondemand private state & tunables ---------------- */
+/* ------------------------------------------------------------------------- */
+/*                    Energy_ondemand: private state & sysfs                 */
+/* ------------------------------------------------------------------------- */
 
 struct energy_ondemand_state {
 	/* Core policy */
@@ -577,10 +607,10 @@ struct energy_ondemand_state {
 	int thermal_emergency_degC;   /* immediate clamp temperature */
 	int safe_step_index;          /* step used as safe floor in emergencies */
 
-	/* Frame pacing awareness (uses TSG if available) */
-	int fps_boost_enable;         /* enable FPS-guided boosting */
-	int frame_time_target_us;     /* target frame time (e.g., 16ms for 60 fps) */
-	int frame_spike_sensitivity;  /* how many spikes trigger a fast jump */
+	/* Frame spike heuristic */
+	int fps_boost_enable;         /* enable utilization-spike guided boosting */
+	int frame_time_target_us;     /* reserved for future (FPS-aware) */
+	int frame_spike_sensitivity;  /* spikes required to trigger jump */
 
 	/* Hysteresis */
 	int hysteresis_cycles_up;
@@ -591,10 +621,14 @@ struct energy_ondemand_state {
 	/* Derived/Runtime */
 	ktime_t last_up_time;
 	ktime_t last_down_time;
+
+	/* Moved former statics here */
+	int prev_weight;
+	int spike_ctr;
 };
 
 static struct energy_ondemand_state eod = {
-	/* Defaults are conservative but game-friendly; tune via sysfs */
+	/* Balanced defaults (tunable via sysfs) */
 	.target_util_pct        = 80,
 	.util_high_pct          = 72,
 	.util_low_pct           = 28,
@@ -611,7 +645,7 @@ static struct energy_ondemand_state eod = {
 	.thermal_headroom_degC  = 6,
 	.thermal_cool_bias      = 1,
 	.thermal_emergency_degC = 82,
-	.safe_step_index        = 6, /* ~800 MHz in dvfs table */
+	.safe_step_index        = 12, /* ~800 MHz */
 
 	.fps_boost_enable       = 1,
 	.frame_time_target_us   = 16666, /* 60 fps */
@@ -624,12 +658,51 @@ static struct energy_ondemand_state eod = {
 
 	.last_up_time           = 0,
 	.last_down_time         = 0,
+
+	.prev_weight            = 0,
+	.spike_ctr              = 0,
 };
 
-/* Simple clamp helper */
-static inline int clamp_int(int v, int lo, int hi) { return (v < lo) ? lo : (v > hi) ? hi : v; }
+/* Helpers */
+static inline int clamp_int(int v, int lo, int hi)
+{
+	return (v < lo) ? lo : (v > hi) ? hi : v;
+}
 
-/* Sysfs: expose a few primary tunables (advanced can be added similarly) */
+static inline bool eod_dwell_expired(ktime_t last, int need_ms)
+{
+	if (need_ms <= 0) return true;
+	return ktime_to_ms(ktime_sub(ktime_get(), last)) >= need_ms;
+}
+
+static inline int eod_level_of_clock(int hz)
+{
+	int idx = gpex_clock_get_table_idx(hz);
+	if (idx < 0) idx = gpex_clock_get_table_idx(gpex_clock_get_min_clock());
+	return idx;
+}
+
+static int eod_compute_effort(int target_pct, int actual_pct)
+{
+	int err = target_pct - actual_pct;
+	/* Integrator with light anti-windup */
+	eod.integrator_q8 = clamp_int(eod.integrator_q8 + (err << 8), -(1<<15), (1<<15));
+	return eod.kp_q8 * err + ((eod.ki_q8 * eod.integrator_q8) >> 8);
+}
+
+static void eod_sanitize_params(void)
+{
+	eod.target_util_pct  = clamp_int(eod.target_util_pct, 10, 99);
+	eod.util_high_pct    = clamp_int(eod.util_high_pct,  20, 99);
+	eod.util_low_pct     = clamp_int(eod.util_low_pct,   1,  60);
+	eod.up_step_jump     = clamp_int(eod.up_step_jump,   1,  4);
+	eod.down_step_max    = clamp_int(eod.down_step_max,  1,  3);
+	eod.safe_step_index  = clamp_int(eod.safe_step_index, 0, num_steps-1);
+	eod.kp_q8            = clamp_int(eod.kp_q8,           0,  512);
+	eod.ki_q8            = clamp_int(eod.ki_q8,           0,  256);
+}
+
+/* sysfs: expose primary tunables (simple key=value parser) */
 static ssize_t eod_params_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE,
@@ -646,13 +719,11 @@ static ssize_t eod_params_show(struct device *dev, struct device_attribute *attr
 static ssize_t eod_params_store(struct device *dev, struct device_attribute *attr,
 				const char *buf, size_t count)
 {
-	/* Format: key=value pairs separated by spaces (any subset allowed) */
-	/* Example: echo "target_util=85 util_high=75 up_jump=3" > /sys/.../eod_params */
+	/* Format: key=value pairs separated by spaces/newlines */
 	int v;
 #define UPD_INT(key, field) if (sscanf(p, key "=%d", &v) == 1) eod.field = v
 	const char *p = buf;
 
-	/* very light parser: iterate tokens separated by spaces/newlines */
 	while (*p) {
 		UPD_INT("target_util", target_util_pct);
 		UPD_INT("util_high", util_high_pct);
@@ -671,53 +742,30 @@ static ssize_t eod_params_store(struct device *dev, struct device_attribute *att
 		UPD_INT("ft_target_us", frame_time_target_us);
 		UPD_INT("spike_sense", frame_spike_sensitivity);
 
-		/* jump to next token */
 		while (*p && *p != ' ' && *p != '\n' && *p != '\t') p++;
 		while (*p == ' ' || *p == '\n' || *p == '\t') p++;
 	}
 
-	/* sanitize */
-	eod.target_util_pct  = clamp_int(eod.target_util_pct, 10, 99);
-	eod.util_high_pct    = clamp_int(eod.util_high_pct,  20, 99);
-	eod.util_low_pct     = clamp_int(eod.util_low_pct,   1,  60);
-	eod.up_step_jump     = clamp_int(eod.up_step_jump,   1,  4);
-	eod.down_step_max    = clamp_int(eod.down_step_max,  1,  3);
-	eod.safe_step_index  = clamp_int(eod.safe_step_index, 0, num_steps-1);
-
+	eod_sanitize_params();
 	return count;
 }
 static DEVICE_ATTR_RW(eod_params);
 
+/* Create eod sysfs node (fixed: no recursion / correct error returns) */
 static int energy_ondemand_sysfs_init(void)
 {
-	int ret;
 	struct device *dev = gpu_get_device();
-	ret = device_create_file(dev, &dev_attr_eod_params);
+	int ret = device_create_file(dev, &dev_attr_eod_params);
+	if (ret) {
+		GPU_LOG(MALI_EXYNOS_WARNING,
+			"Energy_ondemand: failed to create sysfs params (%d)\n", ret);
+	}
 	return ret;
-	
-	if (!ret) {
-        int r2 = energy_ondemand_sysfs_init();
-        if (r2)
-           GPU_LOG(MALI_EXYNOS_WARNING,
-                   "Energy_ondemand: failed to create sysfs params\n");
 }
 
-}
-
-/* ---------------- Energy_ondemand governor core ---------------- */
-
-static inline bool eod_dwell_expired(ktime_t last, int need_ms)
-{
-	if (need_ms <= 0) return true;
-	return ktime_to_ms(ktime_sub(ktime_get(), last)) >= need_ms;
-}
-
-static inline int eod_level_of_clock(int hz)
-{
-	int idx = gpex_clock_get_table_idx(hz);
-	if (idx < 0) idx = gpex_clock_get_table_idx(gpex_clock_get_min_clock());
-	return idx;
-}
+/* ------------------------------------------------------------------------- */
+/*                       Energy_ondemand governor core                        */
+/* ------------------------------------------------------------------------- */
 
 static int gpu_dvfs_governor_energy_ondemand(int utilization)
 {
@@ -725,12 +773,13 @@ static int gpu_dvfs_governor_energy_ondemand(int utilization)
 	int max_idx = gpex_clock_get_table_idx(gpex_clock_get_max_clock());
 	int min_idx = gpex_clock_get_table_idx(gpex_clock_get_min_clock());
 	int cur_idx = dvfs->step;
-	int cur_clk = dvfs->table[cur_idx].clock;
 	int temp_mc = 0;   /* milliC */
 
+	/* Temperature (may fail if zone missing) */
 	{
 		struct thermal_zone_device *tz = thermal_zone_get_zone_by_name("G3D");
-		if (!IS_ERR(tz)) thermal_zone_get_temp(tz, &temp_mc);
+		if (!IS_ERR(tz))
+			thermal_zone_get_temp(tz, &temp_mc);
 	}
 	const int temp_c = temp_mc / 1000;
 
@@ -738,130 +787,121 @@ static int gpu_dvfs_governor_energy_ondemand(int utilization)
 	if (temp_c >= eod.thermal_emergency_degC) {
 		int safe_idx = clamp_int(eod.safe_step_index, max_idx, min_idx);
 		if (cur_idx < safe_idx) {
-			/* going to lower freq index (higher idx number) */
 			if (eod_dwell_expired(eod.last_down_time, eod.min_dwell_down_ms)) {
 				dvfs->step = safe_idx;
 				eod.last_down_time = ktime_get();
 			}
+		} else {
+			dvfs->step = safe_idx;
 		}
 		/* Keep down_requirement sticky while overheated */
-		dvfs->down_requirement = dvfs->table[dvfs->step].down_staycount + eod.staycount_bonus;
+		dvfs->down_requirement =
+			dvfs->table[dvfs->step].down_staycount + eod.staycount_bonus;
 		goto out_assert;
 	}
 
-	/*    We use predicted util to temper PI; it is Q10-based in helper. */
-	/*    gpu_weight_prediction_utilisation() returns util<<10 normalized, we rescale to pct. */
+	/* Use predicted util to smooth PI (Q10 -> pct) */
 	{
-		int util_q10 = gpu_weight_prediction_utilisation(utilization); /* uses TSG history */
+		int util_q10 = gpu_weight_prediction_utilisation(utilization);
 		int util_pred_pct = clamp_int((util_q10 >> 10), 0, 100);
-		/* Mix with current util: 70% predicted, 30% instant */
+		/* Mix: 70% predicted, 30% instant */
 		utilization = (util_pred_pct * 7 + utilization * 3) / 10;
 	}
 
+	/* Spike-based fast boost (heuristic) */
 	if (eod.fps_boost_enable) {
-		/* We don't have a direct FPS getter here; many vendors expose “frame time delta” via TSG.
-		   As a heuristic, we reuse utilization spikes combined with a short dwell timeout:
-		   - If utilization jumps above util_high quickly N times within dwell, treat as frame spikes
-		     and perform multi-step jump. */
-		static int spike_ctr = 0;
 		if (utilization >= eod.util_high_pct) {
-			spike_ctr++;
-			if (spike_ctr >= eod.frame_spike_sensitivity &&
+			eod.spike_ctr++;
+			if (eod.spike_ctr >= eod.frame_spike_sensitivity &&
 			    eod_dwell_expired(eod.last_up_time, eod.min_dwell_up_ms)) {
 				int jump = clamp_int(eod.up_step_jump, 1, 4);
 				dvfs->step = max(cur_idx - jump, max_idx);
 				eod.last_up_time = ktime_get();
-				spike_ctr = 0;
+				eod.spike_ctr = 0;
 				dvfs->down_requirement = dvfs->table[dvfs->step].down_staycount;
-				GPU_LOG(MALI_EXYNOS_WARNING, "Energy_ondemand: FPS spike boost (%d steps)\n", jump);
+				GPU_LOG(MALI_EXYNOS_WARNING,
+					"Energy_ondemand: spike boost (%d steps)\n", jump);
 				goto out_assert;
 			}
-		} else if (spike_ctr > 0) {
-			/* decay */
-			spike_ctr--;
+		} else if (eod.spike_ctr > 0) {
+			eod.spike_ctr--;
 		}
 	}
 
+	/* Sudden-load detector (derivative-like) */
 	{
-		static int prev_weight;
 		int weight = gpex_clock_get_cur_clock() * utilization;
-		int boost_thr = gpex_clock_get_cur_clock() * max(40, eod.util_high_pct); /* scale vs current */
-		if ((cur_idx > max_idx) && ((weight - prev_weight) > boost_thr) &&
+		int boost_thr = gpex_clock_get_cur_clock() *
+				((eod.util_high_pct > 40) ? eod.util_high_pct : 40);
+		if ((cur_idx > max_idx) && ((weight - eod.prev_weight) > boost_thr) &&
 		    eod_dwell_expired(eod.last_up_time, eod.min_dwell_up_ms)) {
 			int jump = clamp_int(eod.up_step_jump, 1, 4);
 			dvfs->step = max(cur_idx - jump, max_idx);
 			eod.last_up_time = ktime_get();
 			dvfs->down_requirement = dvfs->table[dvfs->step].down_staycount;
-			GPU_LOG(MALI_EXYNOS_WARNING, "Energy_ondemand: sudden-load boost (%d steps)\n", jump);
-			prev_weight = weight;
+			GPU_LOG(MALI_EXYNOS_WARNING, "Energy_ondemand: sudden boost (%d)\n", jump);
+			eod.prev_weight = weight;
 			goto out_assert;
 		}
-		prev_weight = weight;
+		eod.prev_weight = weight;
 	}
 
+	/* PI control -> step decision */
 	{
-		/* error = (target - actual) in percent */
-		const int err = eod.target_util_pct - utilization;
-		/* Integrator with light anti-windup */
-		eod.integrator_q8 = clamp_int(eod.integrator_q8 + (err << 8), -(1<<15), (1<<15));
-		/* Control effort ~ kp*err + ki*int */
-		int effort_q8 = eod.kp_q8 * err + (eod.ki_q8 * eod.integrator_q8 >> 8);
+		int effort_q8 = eod_compute_effort(eod.target_util_pct, utilization);
+		int delta_steps = effort_q8 >> 8; /* back to int domain */
 
-		/* Convert effort to step delta:
-		   positive effort => need more freq => decrease index (towards max_idx) */
-		int delta_steps = effort_q8 >> 8; /* back to integer domain */
-
-		/* Thermal soft bias when near limit: nudge down by 'thermal_cool_bias' */
-		if (thermal_limit_temp > 0 && temp_c >= (thermal_limit_temp - eod.thermal_headroom_degC)) {
-			delta_steps -= eod.thermal_cool_bias; /* push a bit downward */
+		/* Thermal soft bias when near limit: nudge downward */
+		if (thermal_limit_temp > 0 &&
+		    temp_c >= (thermal_limit_temp - eod.thermal_headroom_degC)) {
+			delta_steps -= eod.thermal_cool_bias;
 		}
 
 		if (delta_steps < 0) {
-			/* Going down in index (increase freq) */
+			/* Increase freq (lower index) */
 			if (eod_dwell_expired(eod.last_up_time, eod.min_dwell_up_ms)) {
 				int steps = clamp_int(-delta_steps, 1, eod.up_step_jump);
 				int tgt = max(cur_idx - steps, max_idx);
-				/* Hysteresis on up */
 				if (++eod.up_counter >= eod.hysteresis_cycles_up) {
 					dvfs->step = tgt;
 					eod.last_up_time = ktime_get();
 					eod.up_counter = 0;
-					dvfs->down_requirement = dvfs->table[dvfs->step].down_staycount;
+					dvfs->down_requirement =
+						dvfs->table[dvfs->step].down_staycount;
 				}
 			}
 		} else if (delta_steps > 0) {
-			/* Going up in index (decrease freq) — do it slowly */
+			/* Decrease freq (higher index) slowly */
 			if (eod_dwell_expired(eod.last_down_time, eod.min_dwell_down_ms)) {
 				int steps = clamp_int(delta_steps, 1, eod.down_step_max);
 				int tgt = min(cur_idx + steps, min_idx);
-				/* Hysteresis on down */
 				if (++eod.down_counter >= eod.hysteresis_cycles_down) {
 					dvfs->step = tgt;
 					eod.last_down_time = ktime_get();
 					eod.down_counter = 0;
-					/* make it a bit stickier while hot */
 					dvfs->down_requirement =
-						dvfs->table[dvfs->step].down_staycount + eod.staycount_bonus;
+						dvfs->table[dvfs->step].down_staycount +
+						eod.staycount_bonus;
 				} else {
-					/* keep requirement sticky */
-					dvfs->down_requirement = dvfs->table[dvfs->step].down_staycount + 1;
+					dvfs->down_requirement =
+						dvfs->table[dvfs->step].down_staycount + 1;
 				}
 			} else {
-				/* Dwell not expired: refresh requirement to avoid oscillation */
-				dvfs->down_requirement = dvfs->table[dvfs->step].down_staycount + 1;
+				dvfs->down_requirement =
+					dvfs->table[dvfs->step].down_staycount + 1;
 			}
 		} else {
-			/* Neutral effort: maintain staycount */
+			/* Neutral: maintain staycount */
 			dvfs->down_requirement = dvfs->table[dvfs->step].down_staycount;
 		}
 	}
 
+	/* Honor CLBoost if active */
 	if (gpex_clboost_check_activation_condition()) {
-		/* If CLBoost says go max, honor it */
 		dvfs->step = max_idx;
 	}
 
-	/* Keep within allowed limits */
+	/* Hard limits */
 	if (dvfs->table[dvfs->step].clock > gpex_clock_get_max_clock_limit())
 		dvfs->step = eod_level_of_clock(gpex_clock_get_max_clock_limit());
 
@@ -869,6 +909,10 @@ out_assert:
 	DVFS_ASSERT((dvfs->step >= max_idx) && (dvfs->step <= min_idx));
 	return 0;
 }
+
+/* ------------------------------------------------------------------------- */
+/*                                Init / Hooks                               */
+/* ------------------------------------------------------------------------- */
 
 static int __init gpu_governor_sysfs_init(void)
 {
@@ -878,6 +922,7 @@ static int __init gpu_governor_sysfs_init(void)
 	ret = device_create_file(dev, &dev_attr_profile);
 	if (ret)
 		return ret;
+
 	ret = device_create_file(dev, &dev_attr_thermal_limit);
 	if (ret)
 		device_remove_file(dev, &dev_attr_profile);
@@ -886,7 +931,8 @@ static int __init gpu_governor_sysfs_init(void)
 	if (!ret) {
 		int r2 = energy_ondemand_sysfs_init();
 		if (r2)
-			GPU_LOG(MALI_EXYNOS_WARNING, "Energy_ondemand: failed to create sysfs params\n");
+			GPU_LOG(MALI_EXYNOS_WARNING,
+				"Energy_ondemand: failed to create sysfs params\n");
 	}
 	return ret;
 }
@@ -941,9 +987,6 @@ int gpu_dvfs_governor_setting(int governor_type)
 	dvfs->down_requirement = 1;
 	dvfs->governor_type = governor_type;
 
-	/* TODO: why set the cur_clock here? cur_clock should be set when the actual clock is changed */
-	//gpex_clock_get_cur_clock() = dvfs->table[dvfs->step].clock;
-
 	spin_unlock_irqrestore(&dvfs->spinlock, flags);
 
 	return 0;
@@ -983,5 +1026,7 @@ int gpu_dvfs_governor_init(struct dvfs_info *_dvfs)
 		return -1;
 	}
 
+	/* Make sure tunables are in a sane range if userspace wrote bad values before */
+	eod_sanitize_params();
 	return 0;
 }
