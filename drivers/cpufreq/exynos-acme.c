@@ -1643,7 +1643,7 @@ static __init int cpufreq_read_gpu_max(char *gpu_max)
 }
 __setup("gpu_max=", cpufreq_read_gpu_max);
 
-unsigned long arg_mif_max __ro_after_init = 2730000;
+unsigned long arg_mif_max __ro_after_init = 3133000;
 
 static __init int cpufreq_read_mif_max(char *mif_max)
 {
