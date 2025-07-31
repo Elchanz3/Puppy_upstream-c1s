@@ -2136,12 +2136,6 @@ static void max77705_irq_execute(struct max77705_usbc_platform_data *usbc_data,
 		if (cmd_data->seq == OPCODE_UPDATE_SEQ)
 			max77705_handle_update_opcode(usbc_data, cmd_data, data);
 		break;
-#if defined(CONFIG_HV_MUIC_MAX77705_AFC)
-	case COMMAND_AFC_RESULT_READ:
-	case COMMAND_QC_2_0_SET:
-		max77705_muic_handle_detect_dev_hv(usbc_data->muic_data, data);
-		break;
-#endif
 	case OPCODE_CURRENT_SRCCAP:
 		max77705_current_pdo(usbc_data, data);
 		break;
