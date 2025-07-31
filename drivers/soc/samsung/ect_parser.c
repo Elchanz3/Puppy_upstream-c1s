@@ -870,8 +870,8 @@ err_domain_list_allocation:
 	return ret;
 }
 
-#define GLOBAL_MHZ 1794
-#define GPU_MHZ 338
+#define GLOBAL_MHZ 3332
+#define GPU_MHZ 1002
 
 static int ect_parse_gen_param_table(int parser_version, void *address, struct ect_gen_param_table *size)
 {
