@@ -5238,9 +5238,9 @@ skip_current_monitor:
 	if (battery->wc_tx_enable) {
 		unsigned int vout;
 		vout = battery->wc_tx_vout == 0 ? 5000 : (5000 + (battery->wc_tx_vout * 500));
-		pr_info("@Tx_Mode %s: Rx(%s), WC_TX_VOUT(%dmV), UNO_IOUT(%d), MFC_IOUT(%d) AFC_DISABLE(%d)\n",
+		pr_info("@Tx_Mode %s: Rx(%s), WC_TX_VOUT(%dmV), UNO_IOUT(%d), MFC_IOUT(%d), AFC_DISABLE(Disabled)\n",
 			__func__, sec_bat_rx_type_str[battery->wc_rx_type],
-			vout, battery->tx_uno_iout, battery->tx_mfc_iout, battery->afc_disable);
+			vout, battery->tx_uno_iout, battery->tx_mfc_iout);
 	}
 #endif
 
@@ -5508,11 +5508,6 @@ static void sec_bat_wpc_tx_work(struct work_struct *work)
 			break;
 		}
 
-		if (battery->afc_disable) {
-			battery->afc_disable = false;
-			muic_hv_charger_disable(battery->afc_disable);
-		}
-
 		if (!battery->buck_cntl_by_tx) {
 			battery->buck_cntl_by_tx = true;
 			sec_bat_set_charge(battery, battery->charger_mode);
@@ -5528,10 +5523,6 @@ static void sec_bat_wpc_tx_work(struct work_struct *work)
 
 		break;
 	case SS_GEAR:
-		if (!battery->afc_disable) {
-			battery->afc_disable = true;
-			muic_hv_charger_disable(battery->afc_disable);
-		}
 
 		if (is_hv_wire_type(battery->wire_status)) {
 			pr_info("@Tx_Mode %s: charging voltage change(9V -> 5V).\n", __func__);
@@ -6449,23 +6440,20 @@ static int sec_bat_set_property(struct power_supply *psy,
 			break;
 		case POWER_SUPPLY_EXT_PROP_HV_DISABLE:
 #if !defined(CONFIG_PD_CHARGER_HV_DISABLE)
-			pr_info("HV wired charging mode is %s\n", (val->intval == CH_MODE_AFC_DISABLE_VAL ? "Disabled" : "Enabled"));
-			if (val->intval == CH_MODE_AFC_DISABLE_VAL) {
-				sec_bat_set_current_event(battery,
-					SEC_BAT_CURRENT_EVENT_HV_DISABLE, SEC_BAT_CURRENT_EVENT_HV_DISABLE);
-
-				if (is_pd_wire_type(battery->cable_type)) {
-					battery->update_pd_list = true;
-					pr_info("%s: update pd list\n", __func__);
-					select_pdo(1);
-				}
-			} else if (battery->current_event & SEC_BAT_CURRENT_EVENT_HV_DISABLE) {
+			pr_info("HV wired charging mode is Enabled");
+			if (is_pd_wire_type(battery->cable_type)) {
+				battery->update_pd_list = true;
+				pr_info("%s: update pd list\n", __func__);
+				select_pdo(1);
+			} 
+			
+			if (battery->current_event & SEC_BAT_CURRENT_EVENT_HV_DISABLE) {
 				int target_pd_index = 0;
 
 				sec_bat_set_current_event(battery,
 					0, SEC_BAT_CURRENT_EVENT_HV_DISABLE);
 
-				if (is_pd_wire_type(battery->cable_type)) {
+			if (is_pd_wire_type(battery->cable_type)) {
 					battery->update_pd_list = true;
 					pr_info("%s: update pd list\n", __func__);
 #if defined(CONFIG_PDIC_PD30)
@@ -7092,11 +7080,6 @@ static void sec_bat_wpc_tx_en_work(struct work_struct *work)
 		psy_do_property(battery->pdata->wireless_charger_name, set,
 			POWER_SUPPLY_EXT_PROP_WIRELESS_TX_ENABLE, value);
 
-		if (battery->afc_disable) {
-			battery->afc_disable = false;
-			muic_hv_charger_disable(battery->afc_disable);
-		}
-
 #if defined(CONFIG_DIRECT_CHARGING)
 		if (is_pd_apdo_wire_type(battery->cable_type) || battery->buck_cntl_by_tx) {
 #else
@@ -7334,10 +7317,6 @@ static int sec_wireless_set_property(struct power_supply *psy,
 				battery->tx_switch_mode_change = false;	
 				battery->tx_switch_start_soc = 0;
 
-				if (battery->afc_disable) {
-					battery->afc_disable = false;
-					muic_hv_charger_disable(battery->afc_disable);
-				}
 				if (battery->wc_tx_enable) {
 					pr_info("@Tx_Mode %s: Device detached.\n", __func__);
 
@@ -8245,18 +8224,7 @@ static int usb_typec_handle_notification(struct notifier_block *nb,
 	}
 
 skip_cable_check:
-#if defined(CONFIG_PD_CHARGER_HV_DISABLE) && !defined(CONFIG_SEC_FACTORY)
-	if (battery->muic_cable_type == ATTACHED_DEV_AFC_CHARGER_DISABLED_MUIC) {
-		pr_info("%s set SEC_BAT_CURRENT_EVENT_AFC_DISABLE\n", __func__);
-		sec_bat_set_current_event(battery,
-			SEC_BAT_CURRENT_EVENT_AFC_DISABLE, SEC_BAT_CURRENT_EVENT_AFC_DISABLE);
-		wake_lock(&battery->monitor_wake_lock);
-		queue_delayed_work(battery->monitor_wqueue, &battery->monitor_work, 0);
-	} else {
-		sec_bat_set_current_event(battery,
-			0, SEC_BAT_CURRENT_EVENT_AFC_DISABLE);
-	}
-#endif
+
 	sec_bat_set_misc_event(battery,
 		(battery->muic_cable_type == ATTACHED_DEV_UNDEFINED_CHARGING_MUIC ? BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE : 0) |
 		(battery->muic_cable_type == ATTACHED_DEV_UNDEFINED_RANGE_MUIC ? BATT_MISC_EVENT_UNDEFINED_RANGE_TYPE : 0),
@@ -8929,7 +8897,6 @@ static int sec_battery_probe(struct platform_device *pdev)
 	battery->wc_rx_phm_mode = false;
 	battery->wc_tx_enable = false;
 	battery->uno_en = false;
-	battery->afc_disable = false;
 	battery->pd_disable = false;
 	battery->buck_cntl_by_tx = false;
 	battery->wc_tx_vout = WC_TX_VOUT_5_0V;
@@ -9067,22 +9034,6 @@ static int sec_battery_probe(struct platform_device *pdev)
 		sec_bat_set_temp_control_test(battery, true);
 	else
 		sec_bat_set_temp_control_test(battery, false);
-
-	/* Check High Voltage charging option for wired charging */
-#if defined(CONFIG_PD_CHARGER_HV_DISABLE)
-	if (pd_hv_disable) {
-		battery->pd_disable = true;
-		pr_info("PD wired charging mode is disabled\n");
-		sec_bat_set_current_event(battery,
-			SEC_BAT_CURRENT_EVENT_HV_DISABLE, SEC_BAT_CURRENT_EVENT_HV_DISABLE);
-	}
-#else
-	if (get_afc_mode() == CH_MODE_AFC_DISABLE_VAL) {
-		pr_info("HV wired charging mode is disabled\n");
-		sec_bat_set_current_event(battery,
-			SEC_BAT_CURRENT_EVENT_HV_DISABLE, SEC_BAT_CURRENT_EVENT_HV_DISABLE);
-	}
-#endif
 
 	if(fg_reset)
 		sec_bat_set_current_event(battery, SEC_BAT_CURRENT_EVENT_FG_RESET,

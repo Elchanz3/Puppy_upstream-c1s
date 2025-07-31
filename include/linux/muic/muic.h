@@ -286,10 +286,8 @@ struct muic_platform_data {
 	int gpio_usb_sel;
 
 	bool rustproof_on;
-	bool afc_disable;
 	bool is_new_factory;
 	bool dcd_timeout;
-	int afc_disabled_updated;
 
 #ifdef CONFIG_MUIC_HV_FORCE_LIMIT
 	int hv_sel;

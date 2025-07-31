@@ -234,40 +234,6 @@ static const struct max77705_muic_vps_data muic_vps_table[] = {
 		.attached_dev	= ATTACHED_DEV_HICCUP_MUIC,
 	},
 #endif
-#if defined(CONFIG_HV_MUIC_MAX77705_AFC)
-	{
-		.adc		= MAX77705_UIADC_OPEN,
-		.vbvolt		= VB_HIGH,
-		.chgtyp		= CHGTYP_DEDICATED_CHARGER,
-		.muic_switch	= COM_OPEN,
-		.vps_name	= "AFC Charger",
-		.attached_dev	= ATTACHED_DEV_AFC_CHARGER_9V_MUIC,
-	},
-	{
-		.adc		= MAX77705_UIADC_OPEN,
-		.vbvolt		= VB_HIGH,
-		.chgtyp		= CHGTYP_DEDICATED_CHARGER,
-		.muic_switch	= COM_OPEN,
-		.vps_name	= "AFC Charger",
-		.attached_dev	= ATTACHED_DEV_AFC_CHARGER_5V_MUIC,
-	},
-	{
-		.adc		= MAX77705_UIADC_OPEN,
-		.vbvolt		= VB_HIGH,
-		.chgtyp		= CHGTYP_DEDICATED_CHARGER,
-		.muic_switch	= COM_OPEN,
-		.vps_name	= "QC Charger",
-		.attached_dev	= ATTACHED_DEV_QC_CHARGER_9V_MUIC,
-	},
-	{
-		.adc		= MAX77705_UIADC_OPEN,
-		.vbvolt		= VB_HIGH,
-		.chgtyp		= CHGTYP_DEDICATED_CHARGER,
-		.muic_switch	= COM_OPEN,
-		.vps_name	= "QC Charger",
-		.attached_dev	= ATTACHED_DEV_QC_CHARGER_5V_MUIC,
-	},
-#endif
 };
 
 static int muic_lookup_vps_table(muic_attached_dev_t new_dev,
@@ -895,78 +861,6 @@ static ssize_t max77705_muic_set_apo_factory(struct device *dev,
 	return count;
 }
 
-#if defined(CONFIG_HV_MUIC_MAX77705_AFC) || defined(CONFIG_SUPPORT_QC30)
-static ssize_t max77705_muic_show_afc_disable(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct max77705_muic_data *muic_data = dev_get_drvdata(dev);
-	struct muic_platform_data *pdata = muic_data->pdata;
-
-	if (pdata->afc_disable) {
-		pr_info("%s AFC DISABLE\n", __func__);
-		return sprintf(buf, "1\n");
-	}
-
-	pr_info("%s AFC ENABLE", __func__);
-	return sprintf(buf, "0\n");
-}
-
-static ssize_t max77705_muic_set_afc_disable(struct device *dev,
-				    struct device_attribute *attr,
-				    const char *buf, size_t count)
-{
-	struct max77705_muic_data *muic_data = dev_get_drvdata(dev);
-	struct muic_platform_data *pdata = muic_data->pdata;
-	int param_val, ret = 0;
-	bool curr_val = pdata->afc_disable;
-	union power_supply_propval psy_val;
-
-	if (!strncasecmp(buf, "1", 1)) {
-		/* Disable AFC */
-		ret = sec_set_param(CM_OFFSET + 1, '1');
-		pdata->afc_disable = true;
-	} else if (!strncasecmp(buf, "0", 1)) {
-	/* Enable AFC */
-		ret = sec_set_param(CM_OFFSET + 1, '0');
-		pdata->afc_disable = false;
-	} else {
-		pr_warn("%s invalid value\n", __func__);
-	}
-
-	param_val = pdata->afc_disable ? '1' : '0';
-	pr_info("%s: param_val:%d\n", __func__, param_val);
-
-	if (ret < 0) {
-		pr_info("%s:set_param failed - %02x:%02x(%d)\n", __func__,
-			param_val, curr_val, ret);
-
-		pdata->afc_disable = curr_val;
-
-		return -EIO;
-	} else {
-		pr_info("%s: afc_disable:%d (AFC %s)\n", __func__,
-			pdata->afc_disable, pdata->afc_disable ? "Disabled" : "Enabled");
-
-		if (pdata->afc_disabled_updated & 0x2)	
-			pdata->afc_disabled_updated |= 0x1;
-		else
-			max77705_muic_check_afc_disabled(muic_data);
-	}
-
-#if defined(CONFIG_SEC_FACTORY)
-	/* for factory self charging test (AFC-> NORMAL TA) */
-	if (muic_data->attached_dev == ATTACHED_DEV_AFC_CHARGER_9V_MUIC)
-		max77705_muic_afc_hv_set(muic_data, 5);
-#endif
-	pr_info("%s afc_disable(%d)\n", __func__, pdata->afc_disable);
-
-	psy_val.intval = param_val;
-	psy_do_property("battery", set, POWER_SUPPLY_EXT_PROP_HV_DISABLE, psy_val);
-
-	return count;
-}
-#endif /* CONFIG_HV_MUIC_MAX77705_AFC */
-
 static ssize_t max77705_muic_show_vbus_value(struct device *dev,
 				   struct device_attribute *attr,
 				   char *buf)
@@ -1031,10 +925,6 @@ static DEVICE_ATTR(otg_test, 0664,
 		max77705_muic_show_otg_test, max77705_muic_set_otg_test);
 static DEVICE_ATTR(apo_factory, 0664,
 		max77705_muic_show_apo_factory, max77705_muic_set_apo_factory);
-#if defined(CONFIG_HV_MUIC_MAX77705_AFC)
-static DEVICE_ATTR(afc_disable, 0664,
-		max77705_muic_show_afc_disable, max77705_muic_set_afc_disable);
-#endif /* CONFIG_HV_MUIC_MAX77705_AFC */
 static DEVICE_ATTR(vbus_value, 0444, max77705_muic_show_vbus_value, NULL);
 static DEVICE_ATTR(vbus_value_pd, 0444, max77705_muic_show_vbus_value, NULL);
 #if defined(CONFIG_HICCUP_CHARGER)
@@ -1050,9 +940,6 @@ static struct attribute *max77705_muic_attributes[] = {
 	&dev_attr_attached_dev.attr,
 	&dev_attr_otg_test.attr,
 	&dev_attr_apo_factory.attr,
-#if defined(CONFIG_HV_MUIC_MAX77705_AFC)
-	&dev_attr_afc_disable.attr,
-#endif /* CONFIG_HV_MUIC_MAX77705_AFC */
 	&dev_attr_vbus_value.attr,
 	&dev_attr_vbus_value_pd.attr,
 #if defined(CONFIG_HICCUP_CHARGER)
@@ -1875,155 +1762,6 @@ static void max77705_muic_vbus_wa_work(struct work_struct *work)
 	mutex_unlock(&muic_data->muic_mutex);
 }
 
-#if defined(CONFIG_HV_MUIC_MAX77705_AFC)
-static void max77705_muic_afc_work(struct work_struct *work)
-{
-	struct max77705_muic_data *muic_data =
-		container_of(work, struct max77705_muic_data, afc_work.work);
-
-	pr_info("%s\n", __func__);
-
-	if (max77705_muic_check_is_enable_afc(muic_data, muic_data->attached_dev)) {
-		muic_data->pdata->afc_disabled_updated |= 0x2;
-
-		if (!muic_data->pdata->afc_disable) {
-			muic_data->is_check_hv = true;
-			muic_data->hv_voltage = 9;
-			max77705_muic_afc_hv_set(muic_data, 9);
-		} else {
-			muic_data->is_check_hv = true;
-			muic_data->hv_voltage = 5;
-			max77705_muic_afc_hv_set(muic_data, 5);
-		}	
-	}
-}
-
-static int max77705_muic_hv_charger_disable(bool en)
-{
-	struct max77705_muic_data *muic_data = g_muic_data;
-
-	muic_data->is_charger_mode = en;
-
-	schedule_delayed_work(&(muic_data->afc_work), msecs_to_jiffies(0));
-
-	return 0;
-}
-
-static int max77705_muic_afc_set_voltage(int voltage)
-{
-	struct max77705_muic_data *muic_data = g_muic_data;
-	int now_voltage = 0;
-
-	switch (voltage) {
-	case 5:
-	case 9:
-		break;
-	default:
-		pr_err("%s: invalid value %d, return\n", __func__, voltage);
-		return -EINVAL;
-	}
-
-	switch (muic_data->attached_dev) {
-	case ATTACHED_DEV_AFC_CHARGER_5V_MUIC:
-	case ATTACHED_DEV_QC_CHARGER_5V_MUIC:
-		now_voltage = 5;
-		break;
-	case ATTACHED_DEV_AFC_CHARGER_9V_MUIC:
-	case ATTACHED_DEV_QC_CHARGER_9V_MUIC:
-		now_voltage = 9;
-		break;
-	default:
-		break;
-	}
-
-	if (voltage == now_voltage) {
-		pr_err("%s: same with current voltage, return\n", __func__);
-		return -EINVAL;
-	}
-
-	muic_data->hv_voltage = voltage;
-
-	switch (muic_data->attached_dev) {
-	case ATTACHED_DEV_AFC_CHARGER_5V_MUIC:
-	case ATTACHED_DEV_AFC_CHARGER_9V_MUIC:
-		max77705_muic_afc_hv_set(muic_data, voltage);
-		break;
-	case ATTACHED_DEV_QC_CHARGER_5V_MUIC:
-	case ATTACHED_DEV_QC_CHARGER_9V_MUIC:
-		max77705_muic_qc_hv_set(muic_data, voltage);
-		break;
-	default:
-		pr_err("%s: not a HV Charger %d, return\n", __func__, muic_data->attached_dev);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-static int max77705_muic_hv_charger_init(void)
-{
-	struct max77705_muic_data *muic_data = g_muic_data;
-
-	if (muic_data->is_charger_ready) {
-		pr_info("%s: charger is already ready(%d), return\n",
-				__func__, muic_data->is_charger_ready);
-		return -EINVAL;
-	}
-
-	muic_data->is_charger_ready = true;
-
-	if (max77705_muic_check_is_enable_afc(muic_data, muic_data->attached_dev)) {
-		pr_info("%s afc work start\n", __func__);
-		cancel_delayed_work_sync(&(muic_data->afc_work));
-		schedule_delayed_work(&(muic_data->afc_work), msecs_to_jiffies(0));
-	}
-
-	return 0;
-}
-
-static void max77705_muic_detect_dev_hv_work(struct work_struct *work)
-{
-	struct max77705_muic_data *muic_data = container_of(work,
-		struct max77705_muic_data, afc_handle_work);
-	unsigned char opcode = muic_data->afc_op_dataout[0];
-
-	mutex_lock(&muic_data->muic_mutex);
-	if (!max77705_muic_check_is_enable_afc(muic_data, muic_data->attached_dev)) {
-		switch (muic_data->attached_dev) {
-		case ATTACHED_DEV_AFC_CHARGER_5V_MUIC:
-		case ATTACHED_DEV_AFC_CHARGER_9V_MUIC:
-		case ATTACHED_DEV_QC_CHARGER_5V_MUIC:
-		case ATTACHED_DEV_QC_CHARGER_9V_MUIC:
-			pr_info("%s high voltage value is changed\n", __func__);
-			break;
-		default:
-			pr_info("%s status is changed, return\n", __func__);
-			goto out;
-		}
-	}
-
-	if (opcode == COMMAND_AFC_RESULT_READ)
-		max77705_muic_handle_detect_dev_afc(muic_data, muic_data->afc_op_dataout);
-	else if (opcode == COMMAND_QC_2_0_SET)
-		max77705_muic_handle_detect_dev_qc(muic_data, muic_data->afc_op_dataout);
-	else
-		pr_info("%s undefined opcode(%d)\n", __func__, opcode);
-
-out:
-	mutex_unlock(&muic_data->muic_mutex);
-}
-
-void max77705_muic_handle_detect_dev_hv(struct max77705_muic_data *muic_data, unsigned char *data)
-{
-	int i;
-
-	for (i = 0; i < AFC_OP_OUT_LEN; i++)
-		muic_data->afc_op_dataout[i] = data[i];
-
-	schedule_work(&(muic_data->afc_handle_work));
-}
-#endif /* CONFIG_HV_MUIC_MAX77705_AFC */
-
 #if defined(CONFIG_HICCUP_CHARGER)
 static int max77705_muic_set_hiccup_mode(int on_off)
 {
@@ -2427,36 +2165,6 @@ int max77705_muic_probe(struct max77705_usbc_platform_data *usbc_data)
 
 	muic_data->afc_water_disable = false;
 #endif /* CONFIG_MUIC_MAX77705_CCIC */
-
-#if defined(CONFIG_HV_MUIC_MAX77705_AFC)
-	if (get_afc_mode() == CH_MODE_AFC_DISABLE_VAL) {
-		pr_info("%s: afc_disable: AFC disabled\n", __func__);
-		muic_data->pdata->afc_disable = true;
-	} else {
-		pr_info("%s: afc_disable: AFC enabled\n", __func__);
-		muic_data->pdata->afc_disable = false;
-	}
-
-	muic_data->pdata->afc_disabled_updated = 0;
-
-	INIT_DELAYED_WORK(&(muic_data->afc_work),
-		max77705_muic_afc_work);
-	INIT_WORK(&(muic_data->afc_handle_work),
-		max77705_muic_detect_dev_hv_work);
-
-	/* set MUIC afc voltage switching function */
-	muic_data->pdata->muic_afc_set_voltage_cb = max77705_muic_afc_set_voltage;
-	muic_data->pdata->muic_hv_charger_disable_cb = max77705_muic_hv_charger_disable;
-
-	/* set MUIC check charger init function */
-	muic_data->pdata->muic_hv_charger_init_cb = max77705_muic_hv_charger_init;
-	muic_data->is_charger_ready = false;
-	muic_data->is_check_hv = false;
-	muic_data->hv_voltage = 0;
-	muic_data->afc_retry = 0;
-	muic_data->is_afc_reset = false;
-	muic_data->is_skip_bigdata = false;
-#endif /* CONFIG_HV_MUIC_MAX77705_AFC */
 
 #if defined(CONFIG_HICCUP_CHARGER)
 	muic_data->is_hiccup_mode = 0;
