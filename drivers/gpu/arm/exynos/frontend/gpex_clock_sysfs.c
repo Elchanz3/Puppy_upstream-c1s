@@ -569,6 +569,12 @@ GPEX_STATIC ssize_t set_volt_table(const char *buf, size_t count)
 	if ((tokens = read_into((int*)&t, min-max, buf, count)) < 0)
 		return -EINVAL;
 
+	if (tokens == 2)
+		fvmap_patch(GPU_DVFS_TYPE, t[0], t[1]);
+	else
+		for (i = 0; i < tokens; i++)
+			fvmap_patch(GPU_DVFS_TYPE, clk_info->table[i + max].clock, t[i]);
+
 	gpex_clock_update_config_data_from_dt();
 
 	return count;
