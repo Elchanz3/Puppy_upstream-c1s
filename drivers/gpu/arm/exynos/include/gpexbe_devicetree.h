@@ -59,6 +59,11 @@ typedef struct _dt_clqos_item {
 	int big_max;
 } dt_clqos_item;
 
+typedef struct {
+    unsigned int rate;
+    unsigned int volt;
+} dt_rate_volt_item;
+
 typedef struct _dt_info {
 	struct device *dev;
 	int initialized;
@@ -72,8 +77,15 @@ typedef struct _dt_info {
 		u32 row;
 		u32 col;
 	} gpu_dvfs_table_size;
-
+	
 	dt_clock_item *gpu_dvfs_table;
+	
+	struct {
+                int row;
+                int col;
+        } gpu_dvfs_voltage_table_size;
+        
+        dt_rate_volt_item *gpu_dvfs_voltage_table;
 
 	struct gpu_cl_pmqos_table_size {
 		u32 row;
@@ -180,3 +192,13 @@ int gpexbe_devicetree_init(struct device *dev);
 void gpexbe_devicetree_term(void);
 
 #endif /* _GPEXBE_DEVICETREE_H_ */
+
+
+/**
+ * gpexbe_devicetree_get_rate_volt_item() - get gpu rate voltage table array
+ * Return: rate voltage table
+ */
+dt_rate_volt_item *gpexbe_devicetree_get_rate_volt_item(void);
+
+
+

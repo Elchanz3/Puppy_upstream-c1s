@@ -172,14 +172,6 @@ int gpex_pm_power_on(struct device *dev)
 
 void gpex_pm_power_autosuspend(struct device *dev)
 {
-	int ret = 0;
-
-	gpex_ifpo_power_down();
-
-	if (!pm.skip_auto_suspend) {
-		pm_runtime_mark_last_busy(dev);
-		ret = pm_runtime_put_autosuspend(dev);
-	}
 
 	GPU_LOG_DETAILED(MALI_EXYNOS_INFO, LSI_GPU_RPM_SUSPEND_API, ret, 0u,
 			 "power autosuspend prepare\n");
@@ -187,17 +179,6 @@ void gpex_pm_power_autosuspend(struct device *dev)
 
 void gpex_pm_suspend(struct device *dev)
 {
-	int ret = 0;
-
-	gpexwa_wakeup_clock_suspend();
-	gpex_qos_set_from_clock(0);
-
-	gpex_debug_new_record(HIST_SUSPEND);
-	ret = pm_runtime_suspend(dev);
-	gpex_debug_record(HIST_SUSPEND, 0, PM_RUNTIME_SUSPEND, ret);
-
-	if (ret < 0)
-		gpex_debug_incr_error_cnt(HIST_SUSPEND);
 
 	GPU_LOG_DETAILED(MALI_EXYNOS_INFO, LSI_SUSPEND_CALLBACK, ret, 0u, "power suspend\n");
 }
@@ -355,21 +336,7 @@ int pm_callback_runtime_on(struct kbase_device *kbdev)
 
 void gpex_pm_runtime_off_prepare(struct device *dev)
 {
-	CSTD_UNUSED(dev);
 	GPU_LOG_DETAILED(MALI_EXYNOS_DEBUG, LSI_GPU_OFF, 0u, 0u, "runtime off callback\n");
-
-	gpexbe_smc_notify_power_off();
-
-	/* power up from ifpo down state before going to full rtpm power off */
-	gpex_ifpo_power_up();
-	gpex_tsg_reset_count(0);
-	gpex_dvfs_stop();
-
-	gpex_clock_prepare_runtime_off();
-	gpexwa_wakeup_clock_set();
-	gpex_qos_set_from_clock(0);
-
-	pm.power_status = false;
 }
 
 int gpex_pm_init(void)
