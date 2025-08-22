@@ -72,7 +72,7 @@
 		smpl_warn_vth = <0x80>;
 		/* LowBat_Hys[4:3] 00(100mV), 01(200mV), 10(300mV), 11(400mV) */
 		smpl_warn_hys = <0x00>;
-		adc_mode = <1>; /* 0 : disable, 1 : current meter, 2 : power meter */
+		adc_mode = <0>; /* 0 : disable, 1 : current meter, 2 : power meter */
 		adc_sync_mode = <2>; /* 1 : sync mode, 2 : async mode */
 		/* RTC: wtsr/smpl */
 		wtsr_en = "enabled"; /* enable */
@@ -447,7 +447,7 @@
 		interrupt-parent = <&gpa2>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&s_pmic_irq>;
-		adc_mode = <1>; /* 0 : disable, 1 : current meter, 2 : power meter */
+		adc_mode = <0>; /* 0 : disable, 1 : current meter, 2 : power meter */
 		adc_sync_mode = <2>; /* 1 : sync mode, 2 : async mode */
 		wtsr_en = <1>; /* 0 : disable, 1 : enable */
 
@@ -706,7 +706,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&dp_pmic_irq>;
 		s2dos05,s2dos05_int = <&gpa1 4 0>;
-		adc_mode = <1>; /* 0 : disable, 1 : current meter, 2 : power meter */
+		adc_mode = <0>; /* 0 : disable, 1 : current meter, 2 : power meter */
 		adc_sync_mode = <2>; /* 1 : sync mode, 2 : async mode */
 		regulators {
 			dp_buck: s2dos05-buck1 {
